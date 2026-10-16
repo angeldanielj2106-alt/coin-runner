@@ -114,12 +114,15 @@ li{background:color-mix(in srgb,var(--mut) 10%,transparent);border-radius:10px;p
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script>
 const $=id=>document.getElementById(id),cv=$('c'),g=cv.getContext('2d');
 const PRICE=100000,MINQ=2,MAXQ=5,CV=100,PL=.86;
 let W,H,bank=0,stars=0,st='menu',lane=1,px=1,jz=0,jv=0,run=0,spd=.55,t=0,items=[],sp=0,dist=0,last=0,q=2,sx=0,sy=0;
 
-const save=()=>{if(acct&&db&&uid)Promise.resolve().then(()=>db.doc('data/users/'+uid+'/bk_'+acct.toLowerCase()).set({b:bank})).catch(()=>{})};
+const save=()=>{if(acct&&db&&uid)Promise.resolve().then(()=>db.fb?db.doc('users/'+uid).set({n:acct,b:bank}):db.doc('data/users/'+uid+'/bk_'+acct.toLowerCase()).set({b:bank})).catch(()=>{})};
 const fmt=n=>n.toLocaleString('es-CO');
 function rs(){const d=devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=W*d;cv.height=H*d;g.setTransform(d,0,0,d,0,0);if(T3)resize3()}
 addEventListener('resize',()=>{rs();draw()});
@@ -519,9 +522,10 @@ function goAcct(f){aFrom=f;$('aMsg').textContent='';aUI();show('acct')}
 $('toAcct').onclick=()=>goAcct('menu');
 $('aSw').onclick=()=>{aMode=aMode==='up'?'in':'up';$('aMsg').textContent='';aUI()};
 $('aBack').onclick=()=>{if(aFrom==='shop')shop();else show('menu')};
-$('aOut').onclick=()=>{acct=null;bank=0;aUI();upd();show('menu')};
+$('aOut').onclick=()=>{if(db&&db.fb){FA.signOut();adm=false;unlocked=false}acct=null;bank=0;aUI();upd();show('menu')};
 $('aOk').onclick=async()=>{
  const m=$('aMsg'),n=$('aName').value.trim(),pw=$('aPw').value;
+ if(db&&db.fb)return fbAuth(m,n,pw);
  if(!db||!uid||!crypto.subtle){m.textContent='Las cuentas no están disponibles por ahora.';return}
  if(Date.now()<aLock){m.textContent='Espera 30 segundos y vuelve a intentar.';return}
  if(!nrx.test(n)){m.textContent='El nombre debe tener de 3 a 20 letras, números o _.';return}
@@ -564,6 +568,7 @@ $('aDel').onclick=async()=>{
  if(!armed){armed=true;$('aDel').textContent='Toca de nuevo para confirmar';setTimeout(()=>{armed=false;$('aDel').textContent='Eliminar cuenta'},5000);return}
  armed=false;$('aDel').textContent='Eliminar cuenta';
  const nl=acct.toLowerCase();
+ if(db.fb){await fbDel(m);return}
  try{
   const c=(await db.doc(pth('acc_'+nl)).get()).data();
   if(!c||await hashPw($('aDelPw').value,String(c.salt))!==c.h){
@@ -578,6 +583,60 @@ $('aDel').onclick=async()=>{
  acct=null;bank=0;aMode='up';$('aDelPw').value='';$('aMore').classList.add('hidden');
  m.textContent='';aUI();upd();show('menu');
 };
+const FBC={apiKey:"AIzaSyAXrNIB_cNvG3jpphbCAyomtSw_7EuXLgA",authDomain:"coin-runner-ad12d.firebaseapp.com",projectId:"coin-runner-ad12d",storageBucket:"coin-runner-ad12d.firebasestorage.app",messagingSenderId:"1022089635890",appId:"1:1022089635890:web:e846d14c29f47ed2a6342b"};
+const ADMIN_EMAIL='uve549@coinrunner.app'; // cuenta administradora (debe coincidir con las reglas de Firestore)
+let FA=null;
+function initFB(){
+ firebase.initializeApp(FBC);FA=firebase.auth();db=firebase.firestore();db.fb=true;
+ FA.onAuthStateChanged(u=>{
+  if(u)fbLoad(u).catch(()=>{});
+  else{uid=null;acct=null;bank=0;adm=false;unlocked=false;if(snapC)render(snapC);$('mline').textContent='Sin cuenta: tus monedas no se guardan.';aUI();upd()}
+ });
+ db.collection('requests').orderBy('ts').onSnapshot(render,()=>{});
+}
+async function fbLoad(u){
+ uid=u.uid;
+ const d=(await db.doc('users/'+uid).get()).data()||{};
+ acct=d.n||u.email.split('@')[0];bank=Math.max(0,+d.b||0);
+ adm=u.email===ADMIN_EMAIL;unlocked=adm;
+ $('admBtn').classList.toggle('hidden',adm);$('admOn').classList.toggle('hidden',!adm);
+ $('mline').textContent='Tienes 🪙 '+fmt(bank);$('sb').textContent=fmt(bank);
+ if(snapC)render(snapC);
+ aUI();upd();
+}
+async function fbAuth(m,n,pw){
+ const up=aMode==='up';
+ if(Date.now()<aLock){m.textContent='Espera 30 segundos y vuelve a intentar.';return}
+ if(!nrx.test(n)){m.textContent='El nombre debe tener de 3 a 20 letras, números o _.';return}
+ const em=n.toLowerCase()+'@coinrunner.app';
+ try{
+  let c;
+  if(up){
+   if(pw.length<6){m.textContent='La contraseña debe tener al menos 6 caracteres.';return}
+   if(pw!==$('aPw2').value){m.textContent='Las contraseñas no coinciden.';return}
+   c=await FA.createUserWithEmailAndPassword(em,pw);
+   await db.doc('users/'+c.user.uid).set({n,b:0});
+  }else c=await FA.signInWithEmailAndPassword(em,pw);
+  await fbLoad(c.user);
+ }catch(e){
+  const k=e.code||'';
+  if(k==='auth/email-already-in-use')m.textContent='Ese nombre ya está registrado.';
+  else if(!up&&k.startsWith('auth/')&&k!=='auth/network-request-failed'){if(++aFails>=3){aFails=0;aLock=Date.now()+30000}m.textContent='Nombre o contraseña incorrectos.'}
+  else m.textContent='No se pudo completar. Inténtalo de nuevo.';
+  return;
+ }
+ aFails=0;$('aPw').value=$('aPw2').value='';m.textContent='';
+ if(aFrom==='shop')shop();else show('menu');
+}
+async function fbDel(m){
+ const u=FA.currentUser;
+ try{
+  await u.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(u.email,$('aDelPw').value));
+  await db.doc('users/'+u.uid).delete();
+  await u.delete();
+ }catch(e){m.textContent=(e.code||'').startsWith('auth/')?'Contraseña incorrecta.':'No se pudo eliminar. Inténtalo de nuevo.';return}
+ acct=null;bank=0;adm=false;unlocked=false;$('aDelPw').value='';$('aMore').classList.add('hidden');m.textContent='';aUI();upd();show('menu');
+}
 function localDb(){
  let d={};try{d=JSON.parse(localStorage.getItem('cr_local')||'{}')}catch(e){}
  const sv=()=>{try{localStorage.setItem('cr_local',JSON.stringify(d))}catch(e){}};
@@ -588,7 +647,9 @@ function localDb(){
  })};
 }
 async function initDb(){
- if(typeof claude==='undefined'){db=localDb();uid='local';render({docs:[],size:0});return}
+ if(typeof claude==='undefined'){
+  if(window.firebase){try{initFB();return}catch(e){}}
+  db=localDb();uid='local';render({docs:[],size:0});return}
  try{
   const user=await claude.use('user');
   db=await claude.use('db');
